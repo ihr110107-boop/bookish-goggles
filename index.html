@@ -1,0 +1,1823 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>장애물 피하기 게임 (Run & Dodge)</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome for icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Jua&family=Nanum+Gothic:wght@400;700;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Jua', 'Nanum Gothic', sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      overflow: hidden;
+      background-color: #111116;
+    }
+    /* 캔버스 화면 비율 고정 및 반응형 */
+    #gameContainer {
+      aspect-ratio: 16 / 9;
+      max-width: 100%;
+      max-height: 100vh;
+    }
+    /* 버튼 클릭 애니메이션 */
+    .btn-bounce {
+      transition: transform 0.1s ease, filter 0.1s ease;
+    }
+    .btn-bounce:active {
+      transform: scale(0.95);
+      filter: brightness(0.9);
+    }
+    /* 스크롤바 숨기기 */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    /* 피격 시 화면 깜빡임 효과 */
+    @keyframes damageRed {
+      0% { border-color: rgba(239, 68, 68, 0.8); }
+      100% { border-color: rgba(239, 68, 68, 0); }
+    }
+    .damage-effect {
+      animation: damageRed 0.4s ease-out;
+    }
+    /* 질주 모드 전용 테두리 이펙트 */
+    @keyframes feverRainbow {
+      0% { box-shadow: inset 0 0 30px rgba(234, 179, 8, 0.4); }
+      50% { box-shadow: inset 0 0 50px rgba(244, 63, 94, 0.6); }
+      100% { box-shadow: inset 0 0 30px rgba(234, 179, 8, 0.4); }
+    }
+    .fever-active {
+      animation: feverRainbow 1s infinite;
+    }
+    /* 하드모드 붉은 안개 불꽃 경고 테두리 */
+    @keyframes hardFirePulse {
+      0% { box-shadow: inset 0 0 20px rgba(220, 38, 38, 0.5); }
+      50% { box-shadow: inset 0 0 40px rgba(220, 38, 38, 0.8); }
+      100% { box-shadow: inset 0 0 20px rgba(220, 38, 38, 0.5); }
+    }
+    .hard-active-border {
+      animation: hardFirePulse 1.5s infinite;
+    }
+  </style>
+</head>
+<body class="h-screen w-screen flex items-center justify-center p-0 m-0 overflow-hidden">
+
+  <!-- 전체 게임 컨테이너 (16:9 비율 유지) -->
+  <div id="gameContainer" class="relative w-full h-full bg-slate-950 overflow-hidden shadow-2xl flex flex-col items-center justify-center border-4 border-slate-800 transition-colors duration-350">
+    
+    <!-- 실시간 게임 렌더링 캔버스 -->
+    <canvas id="gameCanvas" class="absolute inset-0 w-full h-full block z-0"></canvas>
+
+    <!-- 하드 모드 붉은 불꽃 Vignette 필터 레이어 -->
+    <div id="hardModeOverlay" class="absolute inset-0 pointer-events-none z-5 hidden bg-gradient-to-t from-red-950/10 via-transparent to-red-950/10"></div>
+
+    <!-- 질주 효과 이펙트 레이어 -->
+    <div id="feverOverlay" class="absolute inset-0 pointer-events-none z-5 hidden"></div>
+
+    <!-- ========================================== -->
+    <!-- 1. 메인 화면 UI -->
+    <!-- ========================================== -->
+    <div id="mainMenu" class="absolute inset-0 z-10 flex flex-col justify-between p-6 bg-black/55 backdrop-blur-[1px] transition-opacity duration-300">
+      <!-- 상단바: 최고기록 및 보유 보석 -->
+      <div class="w-full flex justify-between items-start">
+        <!-- 최고 기록 -->
+        <div class="bg-black/80 border-2 border-yellow-400 rounded-2xl px-4 py-2 text-yellow-300 flex items-center space-x-2 shadow-lg">
+          <i class="fas fa-trophy text-xl animate-bounce"></i>
+          <div>
+            <div id="recordLabel" class="text-xs text-yellow-400/80 leading-none">BEST RECORD (NORMAL)</div>
+            <div id="mainBestScore" class="text-xl font-bold tracking-wider">0 m</div>
+          </div>
+        </div>
+        <!-- 보유 보석 -->
+        <div class="bg-black/80 border-2 border-emerald-400 rounded-2xl px-4 py-2 text-emerald-300 flex items-center space-x-2 shadow-lg">
+          <i class="fas fa-gem text-xl text-emerald-400 animate-pulse"></i>
+          <div>
+            <div class="text-xs text-emerald-400/80 leading-none font-sans">MY GEMS</div>
+            <div id="mainGemCount" class="text-xl font-bold tracking-wider">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 중앙 타이틀 및 난이도 선택 토글러 -->
+      <div class="text-center my-auto flex flex-col items-center select-none">
+        <h1 id="mainTitle" class="text-6xl md:text-8xl font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 via-orange-400 to-red-600 drop-shadow-[0_5px_10px_rgba(0,0,0,0.9)] tracking-wider uppercase italic animate-pulse">
+          Run &amp; Dodge
+        </h1>
+        
+        <!-- 난이도 가변 탭 선택 모듈 -->
+        <div class="mt-4 flex bg-slate-900/90 p-1.5 rounded-2xl border-2 border-slate-700/80 shadow-inner">
+          <button id="modeNormalTab" class="px-6 py-2 rounded-xl text-sm font-bold transition-all duration-200 bg-blue-600 text-white shadow-md">
+            <i class="fas fa-smile mr-1.5"></i>노멀 모드
+          </button>
+          <button id="modeHardTab" class="px-6 py-2 rounded-xl text-sm font-bold transition-all duration-200 text-slate-400 hover:text-white">
+            <i class="fas fa-skull-crossbones mr-1.5"></i>하드 모드
+          </button>
+        </div>
+
+        <p id="modeDesc" class="text-white text-xs md:text-sm tracking-widest mt-3.5 bg-black/70 px-5 py-2 rounded-full border border-white/10 max-w-lg transition-colors">
+          적당한 속도로 달리며 아이템 수집과 돌파의 참맛을 느낄 수 있습니다.
+        </p>
+        
+        <div class="mt-3 flex flex-wrap justify-center gap-3 text-xs text-slate-300">
+          <span class="flex items-center"><span class="w-2.5 h-2.5 bg-amber-400 rounded-full inline-block mr-1.5"></span>🌟 황금보석 (+5)</span>
+          <span class="flex items-center"><span class="w-2.5 h-2.5 bg-red-500 rounded-full inline-block mr-1.5"></span>⚡ 무적질주</span>
+          <span id="warningInfo" class="flex items-center text-slate-300"><span class="w-2.5 h-2.5 bg-red-600 rounded-full inline-block mr-1.5"></span>🚨 락온 미사일 주의!</span>
+        </div>
+      </div>
+
+      <!-- 하단 버튼 메뉴 -->
+      <div class="w-full max-w-4xl mx-auto grid grid-cols-3 gap-4 items-center">
+        <!-- 캐릭터 선택 상점 버튼 -->
+        <button id="btnCharShop" class="btn-bounce bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-2xl py-3.5 px-4 border-b-4 border-indigo-800 shadow-lg flex flex-col items-center justify-center space-y-1">
+          <i class="fas fa-user-astronaut text-2xl"></i>
+          <span class="text-sm md:text-base font-bold">캐릭터 선택</span>
+        </button>
+
+        <!-- START 버튼 -->
+        <button id="btnStart" class="btn-bounce bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 hover:from-yellow-500 hover:via-orange-600 hover:to-red-600 text-white text-2xl md:text-4xl font-extrabold rounded-2xl py-4 px-6 border-b-8 border-red-800 shadow-[0_10px_25px_rgba(239,68,68,0.5)] flex flex-col items-center justify-center transform hover:scale-105 transition-all">
+          <span class="tracking-widest" id="startBtnText">START</span>
+          <span class="text-xs font-normal tracking-normal text-yellow-200 mt-1" id="startBtnSubText">노멀 주행</span>
+        </button>
+
+        <!-- 테마 선택 상점 버튼 -->
+        <button id="btnThemeShop" class="btn-bounce bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white rounded-2xl py-3.5 px-4 border-b-4 border-teal-800 shadow-lg flex flex-col items-center justify-center space-y-1">
+          <i class="fas fa-map-marked-alt text-2xl"></i>
+          <span class="text-sm md:text-base font-bold">테마 선택</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 2. 게임 플레이용 오버레이 UI -->
+    <!-- ========================================== -->
+    <div id="gameUI" class="absolute inset-0 z-10 pointer-events-none hidden flex-col justify-between p-4">
+      <!-- 상단 실시간 정보 -->
+      <div class="w-full flex justify-between items-center pointer-events-auto">
+        <!-- 체력 바 -->
+        <div class="flex items-center space-x-3 bg-black/70 px-4 py-2.5 rounded-2xl border border-white/10 max-w-[45%]">
+          <div id="uiCharPreview" class="text-3xl bg-slate-800 p-1 rounded-xl">🏃</div>
+          <div class="flex-1 min-w-[100px] md:min-w-[150px]">
+            <div class="flex justify-between text-xs text-white mb-1">
+              <span class="font-bold flex items-center"><i class="fas fa-heart text-red-500 mr-1 animate-pulse"></i> HP</span>
+              <span id="hpText" class="font-bold">100 / 100</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-3 overflow-hidden p-[2px] border border-slate-700">
+              <div id="hpBar" class="bg-gradient-to-r from-red-500 to-rose-400 h-full rounded-full transition-all duration-100" style="width: 100%"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 실시간 점수 및 제어 판넬 -->
+        <div class="flex items-center space-x-2 md:space-x-4">
+          <!-- 난이도 경고 배지 -->
+          <div id="uiDifficultyBadge" class="bg-blue-600/90 px-3 py-1.5 rounded-full border border-blue-400/50 text-white font-extrabold text-xs md:text-sm tracking-wider flex items-center space-x-1">
+            <i class="fas fa-smile"></i>
+            <span>NORMAL</span>
+          </div>
+
+          <!-- 스피드 배율 -->
+          <div class="bg-black/80 px-3 py-1.5 rounded-full border border-red-500/50 text-red-400 font-bold text-xs md:text-sm flex items-center space-x-1">
+            <i class="fas fa-tachometer-alt animate-pulse"></i>
+            <span>SPEED:</span>
+            <span id="uiSpeedMultiplier">1.0x</span>
+          </div>
+
+          <!-- 보석 획득수 -->
+          <div class="bg-black/80 px-3 py-1.5 rounded-full border border-emerald-500/30 text-emerald-300 flex items-center space-x-1.5 text-sm md:text-base">
+            <i class="fas fa-gem text-emerald-400"></i>
+            <span id="uiGemCount" class="font-bold">0</span>
+          </div>
+
+          <!-- 점수 -->
+          <div class="bg-black/80 px-4 py-1.5 rounded-full border border-yellow-500/30 text-yellow-300 font-bold text-base md:text-xl tracking-wider">
+            <span id="uiScore">0</span> <span class="text-xs text-yellow-500">m</span>
+          </div>
+
+          <!-- 일시정지 -->
+          <button id="btnPause" class="btn-bounce bg-white/10 hover:bg-white/20 text-white p-2 rounded-full border border-white/20 flex items-center justify-center w-10 h-10">
+            <i class="fas fa-pause"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- 질주 타이머 게이지 -->
+      <div id="feverBarContainer" class="w-64 mx-auto bg-black/80 border border-yellow-500/50 p-1 rounded-full absolute top-20 left-1/2 transform -translate-x-1/2 hidden flex-col items-center">
+        <div class="text-[10px] text-yellow-300 font-bold mb-0.5 tracking-widest uppercase animate-pulse">⚡ SUPER DASHING ⚡</div>
+        <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+          <div id="feverBar" class="bg-gradient-to-r from-yellow-400 to-amber-500 h-full rounded-full" style="width: 100%"></div>
+        </div>
+      </div>
+
+      <!-- 미사일 날아오기 경고 싸이렌 오버레이 -->
+      <div id="missileWarning" class="absolute right-10 top-[250px] bg-red-600/90 border-2 border-red-400 text-white font-extrabold px-4 py-2.5 rounded-2xl animate-ping hidden items-center space-x-2 shadow-[0_0_15px_rgba(220,38,38,0.8)]">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span>ROCKET LOCK-ON!</span>
+      </div>
+
+      <!-- 모바일 터치 패드 -->
+      <div class="w-full flex justify-between items-end pointer-events-auto px-2 pb-2">
+        <button id="touchSlide" class="btn-bounce bg-black/60 hover:bg-black/80 border-2 border-white/40 text-white w-20 h-20 md:w-24 md:h-24 rounded-full flex flex-col items-center justify-center shadow-lg active:scale-90 transition-transform">
+          <i class="fas fa-chevron-down text-2xl md:text-3xl animate-bounce"></i>
+          <span class="text-xs font-bold mt-1">SLIDE (누워!)</span>
+        </button>
+
+        <button id="touchJump" class="btn-bounce bg-blue-600/70 hover:bg-blue-600/90 border-2 border-blue-400/50 text-white w-20 h-20 md:w-24 md:h-24 rounded-full flex flex-col items-center justify-center shadow-lg active:scale-90 transition-transform">
+          <i class="fas fa-chevron-up text-2xl md:text-3xl animate-bounce"></i>
+          <span class="text-xs font-bold mt-1">JUMP (뛰어!)</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 3. 캐릭터 상점 팝업 -->
+    <!-- ========================================== -->
+    <div id="charShopModal" class="absolute inset-0 z-20 bg-black/85 backdrop-blur-sm hidden flex-col items-center justify-center p-4">
+      <div class="bg-slate-900 border-2 border-blue-500 rounded-3xl w-full max-w-xl p-5 md:p-6 text-white shadow-2xl flex flex-col max-h-[90%]">
+        <!-- 헤더 -->
+        <div class="flex justify-between items-center pb-3 border-b border-slate-800">
+          <h2 class="text-xl md:text-2xl font-bold flex items-center text-blue-400">
+            <i class="fas fa-user-astronaut mr-2"></i> 캐릭터 선택 및 잠금해제
+          </h2>
+          <!-- 내 보석 -->
+          <div class="bg-slate-950 border border-emerald-500/50 rounded-full px-3 py-1 flex items-center space-x-1.5 text-emerald-300 text-sm">
+            <i class="fas fa-gem text-emerald-400"></i>
+            <span id="shopCharGem" class="font-bold">0</span>
+          </div>
+        </div>
+
+        <!-- 캐릭터 리스트 -->
+        <div class="flex-1 overflow-y-auto my-4 py-2 space-y-3 pr-1 no-scrollbar" id="charListContainer">
+          <!-- JS 동적 생성 -->
+        </div>
+
+        <!-- 하단 닫기 -->
+        <div class="flex justify-end pt-2 border-t border-slate-800">
+          <button id="btnCloseCharShop" class="btn-bounce bg-slate-800 hover:bg-slate-700 px-6 py-2 rounded-xl text-sm font-bold border border-slate-700">
+            닫기
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 4. 테마 상점 팝업 -->
+    <!-- ========================================== -->
+    <div id="themeShopModal" class="absolute inset-0 z-20 bg-black/85 backdrop-blur-sm hidden flex-col items-center justify-center p-4">
+      <div class="bg-slate-900 border-2 border-emerald-500 rounded-3xl w-full max-w-xl p-5 md:p-6 text-white shadow-2xl flex flex-col max-h-[90%]">
+        <div class="flex justify-between items-center pb-3 border-b border-slate-800">
+          <h2 class="text-xl md:text-2xl font-bold flex items-center text-emerald-400">
+            <i class="fas fa-map-marked-alt mr-2"></i> 러닝 테마 선택
+          </h2>
+          <div class="bg-slate-950 border border-emerald-500/50 rounded-full px-3 py-1 flex items-center space-x-1.5 text-emerald-300 text-sm">
+            <i class="fas fa-gem text-emerald-400"></i>
+            <span id="shopThemeGem" class="font-bold">0</span>
+          </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto my-4 py-2 space-y-3 pr-1 no-scrollbar" id="themeListContainer">
+          <!-- JS 동적 생성 -->
+        </div>
+
+        <div class="flex justify-end pt-2 border-t border-slate-800">
+          <button id="btnCloseThemeShop" class="btn-bounce bg-slate-800 hover:bg-slate-700 px-6 py-2 rounded-xl text-sm font-bold border border-slate-700">
+            닫기
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 5. 일시정지 모달 -->
+    <!-- ========================================== -->
+    <div id="pauseModal" class="absolute inset-0 z-20 bg-black/80 backdrop-blur-sm hidden flex-col items-center justify-center space-y-6">
+      <div class="text-center text-white">
+        <h2 class="text-5xl font-extrabold tracking-wider mb-2 text-yellow-400">PAUSE</h2>
+        <p class="text-sm text-slate-400">잠시 숨을 고르는 중...</p>
+      </div>
+      <div class="flex flex-col space-y-3 w-48">
+        <button id="btnResume" class="btn-bounce bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-2xl shadow-lg border-b-4 border-blue-800 flex items-center justify-center space-x-2">
+          <i class="fas fa-play"></i>
+          <span>계속 하기</span>
+        </button>
+        <button id="btnRestartFromPause" class="btn-bounce bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 rounded-2xl shadow-lg border-b-4 border-yellow-700 flex items-center justify-center space-x-2">
+          <i class="fas fa-redo"></i>
+          <span>다시 시작</span>
+        </button>
+        <button id="btnMainMenu" class="btn-bounce bg-slate-650 hover:bg-slate-600 text-white font-bold py-3 rounded-2xl shadow-lg border-b-4 border-slate-800 flex items-center justify-center space-x-2">
+          <i class="fas fa-home"></i>
+          <span>메인 메뉴</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 6. 게임 오버 모달 -->
+    <!-- ========================================== -->
+    <div id="gameOverModal" class="absolute inset-0 z-20 bg-black/90 backdrop-blur-sm hidden flex-col items-center justify-center p-4">
+      <div class="bg-slate-900 border-4 border-red-500 rounded-3xl w-full max-w-md p-6 text-center text-white shadow-2xl relative">
+        <div class="absolute -top-12 left-1/2 transform -translate-x-1/2 bg-red-500 text-white text-3xl font-bold px-6 py-2 rounded-full border-4 border-slate-900 shadow-lg">
+          GAME OVER
+        </div>
+
+        <div class="mt-4 mb-6">
+          <div id="overModeLabel" class="text-slate-400 text-xs tracking-widest bg-slate-950/60 inline-block px-3 py-1 rounded-full border border-slate-800 mb-2">NORMAL MODE RUN</div>
+          <div class="text-slate-400 text-sm">이번 주행한 최장 거리</div>
+          <div id="finalScore" class="text-5xl font-extrabold text-yellow-300 tracking-wider my-1">0 m</div>
+          <div id="newBestBadge" class="hidden text-xs bg-gradient-to-r from-red-500 via-orange-500 to-yellow-500 text-white font-bold py-1.5 px-4 rounded-full inline-block animate-pulse mb-3 shadow-md">
+            🎉 NEW BEST RECORD! 🎉
+          </div>
+
+          <div class="grid grid-cols-2 gap-4 mt-4 bg-slate-950 p-4 rounded-2xl border border-slate-800">
+            <div>
+              <div class="text-slate-400 text-xs">보석 획득</div>
+              <div class="text-emerald-400 font-bold text-xl flex items-center justify-center space-x-1">
+                <i class="fas fa-gem"></i>
+                <span id="earnedGems">0</span>
+              </div>
+            </div>
+            <div>
+              <div id="overBestLabel" class="text-slate-400 text-xs">최고 기록 (NORMAL)</div>
+              <div class="text-yellow-400 font-bold text-xl" id="overBestScore">0 m</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <button id="btnRestart" class="btn-bounce bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-md border-b-4 border-orange-700 flex items-center justify-center space-x-2">
+            <i class="fas fa-redo"></i>
+            <span>재도전</span>
+          </button>
+          <button id="btnGoHome" class="btn-bounce bg-slate-700 hover:bg-slate-600 text-white font-bold py-3.5 px-4 rounded-xl shadow-md border-b-4 border-slate-800 flex items-center justify-center space-x-2">
+            <i class="fas fa-home"></i>
+            <span>로비로</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ==========================================
+    // 0. 게임 저장소 데이터 연동 (하드모드 점수 독립 적용)
+    // ==========================================
+    const DEFAULT_DATA = {
+      gems: 0,
+      bestScore: 0,         // 노멀 모드 최고 기록
+      bestScoreHard: 0,     // 하드 모드 최고 기록
+      selectedCharacter: 'runner',
+      selectedTheme: 'desert',
+      unlockedCharacters: ['runner'],
+      unlockedThemes: ['desert']
+    };
+
+    let gameData = { ...DEFAULT_DATA };
+    let selectedMode = 'normal'; // 'normal' 또는 'hard' 선택 상태
+
+    function loadGameData() {
+      try {
+        const saved = localStorage.getItem('run_and_dodge_save_v4');
+        if (saved) {
+          gameData = { ...DEFAULT_DATA, ...JSON.parse(saved) };
+        }
+      } catch (e) {
+        console.error("데이터 로드 오류:", e);
+      }
+    }
+
+    function saveGameData() {
+      try {
+        localStorage.setItem('run_and_dodge_save_v4', JSON.stringify(gameData));
+      } catch (e) {
+        console.error("데이터 저장 오류:", e);
+      }
+    }
+
+    const CHARACTERS = {
+      runner: { id: 'runner', name: '스피드 러너', emoji: '👦', price: 0, desc: '가장 가벼운 체구의 밸런스형 러너입니다.', bodyColor: '#3b82f6', shoeColor: '#ffffff' },
+      astronaut: { id: 'astronaut', name: '네오 우주인', emoji: '🧑‍🚀', price: 20, desc: '제트 가방을 장착해 가벼운 도약이 가능합니다.', bodyColor: '#ffffff', shoeColor: '#ef4444' },
+      ninja: { id: 'ninja', name: '시노비 닌자', emoji: '🥷', price: 50, desc: '바람처럼 날렵한 몸짓의 암살 러너입니다.', bodyColor: '#1e1b4b', shoeColor: '#10b981' },
+      robot: { id: 'robot', name: '사이보그 RX', emoji: '🤖', price: 100, desc: '강력한 합금 파츠를 부착해 전진력이 우수합니다.', bodyColor: '#64748b', shoeColor: '#eab308' },
+      dino: { id: 'dino', name: '불꽃 아기공룡', emoji: '🦖', price: 150, desc: '무서운 포효로 달아나는 우승 후보 공룡입니다.', bodyColor: '#22c55e', shoeColor: '#f97316' }
+    };
+
+    const THEMES = {
+      desert: {
+        id: 'desert',
+        name: '황량한 사막',
+        price: 0,
+        bgGradient: ['#fef3c7', '#fde68a', '#f59e0b'],
+        groundColor: '#d97706',
+        groundAccent: '#b45309',
+        obstacleNames: ['선인장 🌵', '스컬 💀', '모래 바람 🌪️', '미사일 🚀', '바위 🪨'],
+        healEmoji: '🧪',
+        normalGemEmoji: '💎',
+        superGemEmoji: '🌟',
+        dashItemEmoji: '⚡',
+        desc: '유도 폭탄과 굴러오는 바위가 어우러진 뜨거운 모래 사막.'
+      },
+      arctic: {
+        id: 'arctic',
+        name: '꽁꽁 북극',
+        price: 30,
+        bgGradient: ['#e0f2fe', '#bae6fd', '#7dd3fc'],
+        groundColor: '#38bdf8',
+        groundAccent: '#0284c7',
+        obstacleNames: ['빙하 🧊', '눈사람 ⛄', '눈꽃 ❄️', '유도탄 🚀', '눈구슬 🪨'],
+        healEmoji: '☕',
+        normalGemEmoji: '💎',
+        superGemEmoji: '🌟',
+        dashItemEmoji: '⚡',
+        desc: '바닥에서 튀는 눈구슬과 미사일이 날아오는 극한 테마.'
+      },
+      space: {
+        id: 'space',
+        name: '네오 코스모',
+        price: 80,
+        bgGradient: ['#0f172a', '#1e1b4b', '#311042'],
+        groundColor: '#6366f1',
+        groundAccent: '#4f46e5',
+        obstacleNames: ['우주석 ☄️', '우주선 🛰️', '플라즈마 ⚡', '어뢰 🚀', '메테오 🪨'],
+        healEmoji: '🔋',
+        normalGemEmoji: '💎',
+        superGemEmoji: '🌟',
+        dashItemEmoji: '⚡',
+        desc: '강력한 유도 어뢰와 빠른 속도의 우주 비행 장애물들이 있는 우주 기지.'
+      }
+    };
+
+    // ==========================================
+    // 1. 게임 엔진 변수 선언
+    // ==========================================
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let isPlaying = false;
+    let isPaused = false;
+    let isGameOver = false;
+
+    let lastTime = 0;
+    let animationFrameId = null;
+
+    let score = 0;
+    let distance = 0;
+    let gemsEarnedThisRun = 0;
+
+    let baseSpeed = 6;
+    let gameSpeed = baseSpeed;
+    let speedMultiplier = 1.0;
+    
+    let hp = 100;
+    const maxHp = 100;
+
+    let isFeverMode = false;
+    let feverTimer = 0;
+    let maxFeverDuration = 300; // 가변형 지속시간 (노멀 300, 하드 200)
+
+    let player = null;
+    let obstacles = [];
+    let items = [];
+    let backgroundParticles = [];
+    let scoreFloaters = [];
+
+    let canvasWidth = 1280;
+    let canvasHeight = 720;
+    let groundY = 560;
+
+    // 조작 감지용 키 상태
+    const keys = {};
+    // 키 입력 중복 실행 방지용 플래그 (2단 점프 개선 핵심)
+    const keyPressed = {};
+
+    // 하드 모드 전용 인게임 물리 변수들
+    let obstacleDamage = 25;       // 노멀 25, 하드 34
+    let speedIncreaseRate = 0.0012; // 노멀 0.0012, 하드 0.0024
+    let missileWarningLimit = 40;  // 노멀 40, 하드 25
+    let invulnerableDuration = 60; // 노멀 60, 하드 35
+    let currentActiveMode = 'normal'; // 플레이 중인 난이도 정보
+
+    const uiMainMenu = document.getElementById('mainMenu');
+    const uiGamePlay = document.getElementById('gameUI');
+    const uiCharShopModal = document.getElementById('charShopModal');
+    const uiThemeShopModal = document.getElementById('themeShopModal');
+    const uiPauseModal = document.getElementById('pauseModal');
+    const uiGameOverModal = document.getElementById('gameOverModal');
+    const uiFeverOverlay = document.getElementById('feverOverlay');
+    const uiFeverBarContainer = document.getElementById('feverBarContainer');
+    const uiFeverBar = document.getElementById('feverBar');
+    const uiMissileWarning = document.getElementById('missileWarning');
+    const uiDifficultyBadge = document.getElementById('uiDifficultyBadge');
+    const uiHardModeOverlay = document.getElementById('hardModeOverlay');
+
+    // ==========================================
+    // 2. 리사이즈
+    // ==========================================
+    function resizeCanvas() {
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('load', () => {
+      resizeCanvas();
+      loadGameData();
+      updateMainUI();
+      renderMenuBackground();
+    });
+
+    // ==========================================
+    // 3. 물리 모델 및 비주얼 캐릭터 클래스
+    // ==========================================
+    class Player {
+      constructor(charConfig) {
+        this.width = 75;
+        this.height = 100;
+        this.x = 180;
+        this.y = groundY - this.height;
+        this.vy = 0;
+        this.gravity = 0.65;
+        this.jumpForce = -16.5;
+        
+        this.isJumping = false;
+        this.isDoubleJumping = false;
+        this.isSliding = false;
+        
+        this.emoji = charConfig.emoji;
+
+        this.slideHeight = 35; // 완전 눕기용 높이
+        this.normalHeight = 100;
+
+        this.invulnerableTime = 0;
+        this.blinkState = false;
+      }
+
+      jump() {
+        if (this.isSliding) return;
+        
+        if (!this.isJumping) {
+          this.isJumping = true;
+          this.vy = this.jumpForce;
+        } else if (!this.isDoubleJumping) {
+          this.isDoubleJumping = true;
+          this.vy = this.jumpForce * 0.82;
+        }
+      }
+
+      slide(start) {
+        if (start) {
+          if (!this.isJumping) {
+            this.isSliding = true;
+            this.height = this.slideHeight;
+          }
+        } else {
+          if (this.isSliding) {
+            this.isSliding = false;
+            this.height = this.normalHeight;
+          }
+        }
+      }
+
+      // 정교화된 플레이어용 인게임 무결성 히트박스 영역 계산 함수
+      getHitbox() {
+        if (this.isSliding) {
+          return {
+            x: this.x + 8,
+            y: this.y + 2,
+            width: this.width - 16,
+            height: this.height - 4
+          };
+        } else {
+          return {
+            x: this.x + 16,     // 좌우 16px씩 판정 축소 (아슬아슬하게 스치기 지원)
+            y: this.y + 12,     // 둥근 이모지 머리 윗부분 여백만큼 판정 축소
+            width: this.width - 32,
+            height: this.height - 18
+          };
+        }
+      }
+
+      update() {
+        if (this.invulnerableTime > 0) {
+          this.invulnerableTime--;
+          if (this.invulnerableTime % 4 === 0) {
+            this.blinkState = !this.blinkState;
+          }
+        } else {
+          this.blinkState = false;
+        }
+
+        this.vy += this.gravity;
+        this.y += this.vy;
+
+        const currentGround = groundY - this.height;
+        if (this.y >= currentGround) {
+          this.y = currentGround;
+          this.vy = 0;
+          this.isJumping = false;
+          this.isDoubleJumping = false;
+        }
+      }
+
+      draw() {
+        if (this.blinkState) return;
+
+        ctx.save();
+
+        if (this.isSliding) {
+          // 원래대로 깔끔하게 누운 이모지 연출
+          ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+          ctx.scale(-1, 1);
+          ctx.rotate(-Math.PI / 2.3);
+          
+          ctx.font = "80px Arial";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(this.emoji, 0, -10);
+        } else {
+          // 달리기/점프 시 오리지널 이모지 렌더링
+          ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+          ctx.scale(-1, 1);
+          
+          if (this.isJumping) {
+            ctx.rotate(-this.vy * 0.04);
+          }
+          
+          ctx.font = "80px Arial";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(this.emoji, 0, 0);
+        }
+
+        ctx.restore();
+      }
+    }
+
+    // ==========================================
+    // 4. 장애물 유형 및 클래스 정의
+    // ==========================================
+    class Obstacle {
+      constructor(type, currentTheme, playerTargetY = null) {
+        this.type = type; 
+        this.x = canvasWidth + 120;
+        this.theme = currentTheme;
+        
+        const info = THEMES[this.theme];
+
+        this.angle = 0;
+        this.vy = 0;
+        this.gravity = 0;
+
+        if (this.type === 'low') {
+          this.width = 60;
+          this.height = 75;
+          this.y = groundY - this.height;
+          this.emoji = this.theme === 'desert' ? '🌵' : (this.theme === 'arctic' ? '🧊' : '☄️');
+        } 
+        else if (this.type === 'high') {
+          this.width = 60;
+          this.height = 60;
+          this.y = groundY - 125;
+          this.emoji = this.theme === 'desert' ? '💀' : (this.theme === 'arctic' ? '❄️' : '⚡');
+        } 
+        else if (this.type === 'wide') {
+          this.width = 110;
+          this.height = 45;
+          this.y = groundY - this.height;
+          this.emoji = this.theme === 'desert' ? '🌪️' : (this.theme === 'arctic' ? '⛄' : '🛰️');
+        }
+        else if (this.type === 'rolling') {
+          this.width = 65;
+          this.height = 65;
+          this.y = groundY - this.height;
+          this.emoji = this.theme === 'desert' ? '🪨' : (this.theme === 'arctic' ? '❄️' : '☄️');
+          this.rollSpeed = 0.08;
+          this.vy = -Math.random() * 4 - 2;
+          this.gravity = 0.15;
+        }
+        else if (this.type === 'missile') {
+          this.width = 80;
+          this.height = 40;
+          this.y = playerTargetY !== null ? playerTargetY + 20 : groundY - 80;
+          this.emoji = '🚀';
+          this.speedMultiplier = currentActiveMode === 'hard' ? 2.5 : 2.1;
+        }
+      }
+
+      getHitbox() {
+        let shrinkX = 10, shrinkY = 10;
+
+        if (this.type === 'missile') {
+          shrinkX = 16;
+          shrinkY = 12;
+        } else if (this.type === 'rolling') {
+          shrinkX = 14;
+          shrinkY = 14;
+        } else if (this.type === 'wide') {
+          shrinkX = 22;
+          shrinkY = 8;
+        } else if (this.type === 'low') {
+          shrinkX = 12;
+          shrinkY = 8;
+        } else if (this.type === 'high') {
+          shrinkX = 12;
+          shrinkY = 10;
+        }
+
+        return {
+          x: this.x + shrinkX,
+          y: this.y + shrinkY,
+          width: this.width - (shrinkX * 2),
+          height: this.height - (shrinkY * 2)
+        };
+      }
+
+      update() {
+        if (this.type === 'missile') {
+          this.x -= (gameSpeed * this.speedMultiplier);
+        } else if (this.type === 'rolling') {
+          this.x -= gameSpeed;
+          this.angle += this.rollSpeed;
+          
+          this.vy += this.gravity;
+          this.y += this.vy;
+          if (this.y >= groundY - this.height) {
+            this.y = groundY - this.height;
+            this.vy = -Math.random() * 4 - 3; 
+          }
+        } else {
+          this.x -= gameSpeed;
+        }
+      }
+
+      draw() {
+        ctx.save();
+        
+        if (this.type === 'rolling') {
+          ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+          ctx.rotate(this.angle);
+          ctx.font = "60px Arial";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(this.emoji, 0, 0);
+        } else if (this.type === 'missile') {
+          ctx.translate(this.x + this.width / 2, this.y + this.height / 2);
+          ctx.scale(-1, 1);
+          ctx.font = "60px Arial";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          
+          ctx.shadowColor = 'rgba(239,68,68,0.85)';
+          ctx.shadowBlur = 15;
+          ctx.fillText(this.emoji, 0, 0);
+        } else {
+          ctx.font = `${Math.max(this.width, this.height) + 12}px Arial`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(this.emoji, this.x + this.width / 2, this.y + this.height / 2);
+        }
+
+        ctx.restore();
+      }
+    }
+
+    // 아이템 클래스
+    class Item {
+      constructor(type, currentTheme) {
+        this.type = type; 
+        this.x = canvasWidth + 100;
+        this.theme = currentTheme;
+
+        this.hoverOffset = Math.random() * 10;
+        this.hoverSpeed = 0.06;
+        this.hoverRange = 12;
+
+        const randY = Math.random();
+        if (randY < 0.4) {
+          this.y = groundY - 145;
+        } else if (randY < 0.75) {
+          this.y = groundY - 85;
+        } else {
+          this.y = groundY - 40;
+        }
+
+        this.width = 45;
+        this.height = 45;
+
+        const info = THEMES[this.theme];
+        if (this.type === 'gem') {
+          this.emoji = info.normalGemEmoji;
+        } else if (this.type === 'superGem') {
+          this.emoji = info.superGemEmoji;
+        } else if (this.type === 'heal') {
+          this.emoji = info.healEmoji;
+        } else if (this.type === 'dash') {
+          this.emoji = info.dashItemEmoji;
+        }
+      }
+
+      update() {
+        this.x -= gameSpeed;
+        this.hoverOffset += this.hoverSpeed;
+      }
+
+      draw() {
+        const bounceY = this.y + Math.sin(this.hoverOffset) * this.hoverRange;
+        ctx.save();
+        
+        if (this.type === 'superGem') {
+          ctx.shadowColor = 'rgba(250, 204, 21, 0.9)';
+          ctx.shadowBlur = 15;
+        } else if (this.type === 'dash') {
+          ctx.shadowColor = 'rgba(239, 68, 68, 0.9)';
+          ctx.shadowBlur = 15;
+        }
+
+        ctx.font = "45px Arial";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.emoji, this.x + this.width / 2, bounceY + this.height / 2);
+        ctx.restore();
+      }
+
+      getActualY() {
+        return this.y + Math.sin(this.hoverOffset) * this.hoverRange;
+      }
+    }
+
+    // 이펙트 연출 클래스
+    class ScoreFloater {
+      constructor(x, y, text, color) {
+        this.x = x;
+        this.y = y;
+        this.text = text;
+        this.color = color;
+        this.alpha = 1.0;
+        this.vy = -2.0;
+      }
+      update() {
+        this.y += this.vy;
+        this.alpha -= 0.025;
+      }
+      draw() {
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, this.alpha);
+        ctx.font = "bold 26px Arial";
+        ctx.fillStyle = this.color;
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 4;
+        ctx.strokeText(this.text, this.x, this.y);
+        ctx.fillText(this.text, this.x, this.y);
+        ctx.restore();
+      }
+    }
+
+    // 배경 파티클
+    class Particle {
+      constructor(theme) {
+        this.x = Math.random() * canvasWidth;
+        this.y = Math.random() * (groundY - 50);
+        this.theme = theme;
+        this.vx = -(Math.random() * 2 + 1.5);
+        this.size = Math.random() * 4 + 1;
+        this.color = this.theme === 'desert' ? 'rgba(251, 191, 36, 0.25)' : (this.theme === 'arctic' ? 'rgba(255, 255, 255, 0.6)' : 'rgba(168, 85, 247, 0.3)');
+      }
+
+      update() {
+        const currentForce = isFeverMode ? 3.5 : 1.0;
+        this.x += (this.vx * currentForce);
+
+        if (this.x < -20) {
+          this.x = canvasWidth + 20;
+          this.y = Math.random() * (groundY - 50);
+        }
+      }
+
+      draw() {
+        ctx.save();
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        if (isFeverMode) {
+          ctx.fillRect(this.x, this.y, this.size * 10, this.size);
+        } else {
+          ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+
+    // ==========================================
+    // 5. 스폰 연산 및 레이저 가이드 라인
+    // ==========================================
+    let obstacleTimer = 0;
+    let nextObstacleTime = 100;
+
+    let itemTimer = 0;
+    let nextItemTime = 140;
+
+    let missileWarningTimer = 0;
+    let lockOnTargetY = 0;
+
+    function handleSpawners() {
+      obstacleTimer++;
+      if (obstacleTimer >= nextObstacleTime) {
+        obstacleTimer = 0;
+
+        const bmin = currentActiveMode === 'hard' ? 18 : 25;
+        const bmax = currentActiveMode === 'hard' ? 40 : 120;
+        const speedScale = currentActiveMode === 'hard' ? 2.5 : 1.5;
+        const speedMultiplierScale = currentActiveMode === 'hard' ? 6.5 : 4.0;
+
+        const minGap = Math.max(bmin, 55 - Math.floor(gameSpeed * speedScale));
+        const maxGap = Math.max(bmin + 15, bmax - Math.floor(gameSpeed * speedMultiplierScale));
+        nextObstacleTime = minGap + Math.floor(Math.random() * (maxGap - minGap + 1));
+
+        const roll = Math.random();
+        
+        if (roll < 0.20) {
+          lockOnTargetY = player ? player.y : groundY - 100;
+          missileWarningTimer = missileWarningLimit;
+          uiMissileWarning.classList.remove('hidden');
+          uiMissileWarning.classList.add('flex');
+        } 
+        else if (roll < 0.48) {
+          obstacles.push(new Obstacle('rolling', gameData.selectedTheme));
+        }
+        else {
+          const regularTypes = ['low', 'high', 'wide'];
+          const randType = regularTypes[Math.floor(Math.random() * regularTypes.length)];
+          obstacles.push(new Obstacle(randType, gameData.selectedTheme));
+        }
+      }
+
+      if (missileWarningTimer > 0) {
+        missileWarningTimer--;
+        if (missileWarningTimer === 0) {
+          uiMissileWarning.classList.add('hidden');
+          obstacles.push(new Obstacle('missile', gameData.selectedTheme, lockOnTargetY));
+        }
+      }
+
+      itemTimer++;
+      if (itemTimer >= nextItemTime) {
+        itemTimer = 0;
+        nextItemTime = 100 + Math.floor(Math.random() * 180);
+
+        const itemRoll = Math.random();
+        let itType = 'gem';
+
+        const dashChance = currentActiveMode === 'hard' ? 0.94 : 0.88;
+
+        if (itemRoll < 0.55) {
+          itType = 'gem';
+        } else if (itemRoll < 0.75) {
+          itType = 'superGem';
+        } else if (itemRoll < dashChance) {
+          itType = 'heal';
+        } else {
+          itType = 'dash';
+        }
+
+        items.push(new Item(itType, gameData.selectedTheme));
+      }
+    }
+
+    // ==========================================
+    // 6. 실시간 업데이트 및 물리 판정
+    // ==========================================
+    function updateGame(deltaTime) {
+      if (!isPlaying || isPaused || isGameOver) return;
+
+      distance += (gameSpeed * 0.04);
+      score = Math.floor(distance);
+      document.getElementById('uiScore').innerText = score;
+
+      baseSpeed += speedIncreaseRate; 
+      
+      if (isFeverMode) {
+        gameSpeed = baseSpeed * 2.0;
+        
+        feverTimer--;
+        const ratio = (feverTimer / maxFeverDuration) * 100;
+        uiFeverBar.style.width = `${ratio}%`;
+
+        if (feverTimer <= 0) {
+          disableFeverMode();
+        }
+      } else {
+        gameSpeed = baseSpeed;
+      }
+
+      speedMultiplier = (gameSpeed / 6.0).toFixed(1);
+      document.getElementById('uiSpeedMultiplier').innerText = `${speedMultiplier}x`;
+
+      player.update();
+
+      if (keys['ArrowUp'] || keys['KeyW'] || keys['Space']) {
+        if (!keyPressed['Jump']) {
+          player.jump();
+          keyPressed['Jump'] = true; 
+        }
+      }
+      if (keys['ArrowDown'] || keys['KeyS']) {
+        player.slide(true);
+      } else {
+        if (!isTouchSliding) {
+          player.slide(false);
+        }
+      }
+
+      const playerHitbox = player.getHitbox();
+
+      // 장애물 물리 판정
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        const obs = obstacles[i];
+        obs.update();
+
+        if (obs.x + obs.width < -100 || obs.y > canvasHeight + 100) {
+          obstacles.splice(i, 1);
+          continue;
+        }
+
+        const obsHitbox = obs.getHitbox();
+
+        if (isFeverMode) {
+          if (checkCollision(playerHitbox, obsHitbox)) {
+            scoreFloaters.push(new ScoreFloater(obs.x, obs.y, "CRASH! 💥", "#facc15"));
+            obstacles.splice(i, 1);
+            shakeScreen();
+            continue;
+          }
+        } else if (player.invulnerableTime === 0) {
+          if (checkCollision(playerHitbox, obsHitbox)) {
+            hp -= obstacleDamage;
+            player.invulnerableTime = invulnerableDuration;
+            
+            const damageText = `-${obstacleDamage} HP 🩸`;
+            scoreFloaters.push(new ScoreFloater(player.x + 30, player.y - 15, damageText, "#f43f5e"));
+            
+            triggerDamageFlash();
+            shakeScreen();
+            updateHpUI();
+
+            if (hp <= 0) {
+              triggerGameOver();
+              return;
+            }
+          }
+        }
+      }
+
+      // 아이템 물리 판정
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        item.update();
+
+        if (item.x + item.width < 0) {
+          items.splice(i, 1);
+          continue;
+        }
+
+        const itemActualY = item.getActualY();
+        if (checkCollision(
+          playerHitbox,
+          { x: item.x, y: itemActualY, width: item.width, height: item.height }
+        )) {
+          if (item.type === 'gem') {
+            gemsEarnedThisRun += 1;
+            gameData.gems += 1;
+            document.getElementById('uiGemCount').innerText = gemsEarnedThisRun;
+            scoreFloaters.push(new ScoreFloater(item.x, itemActualY, "+1 💎", "#10b981"));
+            saveGameData();
+          } 
+          else if (item.type === 'superGem') {
+            gemsEarnedThisRun += 5;
+            gameData.gems += 5;
+            document.getElementById('uiGemCount').innerText = gemsEarnedThisRun;
+            scoreFloaters.push(new ScoreFloater(item.x, itemActualY, "+5 GOLD GEMS! 🌟", "#fbbf24"));
+            saveGameData();
+          } 
+          else if (item.type === 'heal') {
+            hp = Math.min(maxHp, hp + 20);
+            updateHpUI();
+            scoreFloaters.push(new ScoreFloater(item.x, itemActualY, "+20 HP 🧪", "#f43f5e"));
+          } 
+          else if (item.type === 'dash') {
+            enableFeverMode();
+          }
+
+          items.splice(i, 1);
+        }
+      }
+
+      for (let i = scoreFloaters.length - 1; i >= 0; i--) {
+        const floater = scoreFloaters[i];
+        floater.update();
+        if (floater.alpha <= 0) {
+          scoreFloaters.splice(i, 1);
+        }
+      }
+
+      backgroundParticles.forEach(p => p.update());
+      handleSpawners();
+    }
+
+    let shakeTimer = 0;
+    function shakeScreen() {
+      shakeTimer = 15;
+    }
+
+    function triggerDamageFlash() {
+      const container = document.getElementById('gameContainer');
+      container.classList.add('damage-effect');
+      setTimeout(() => {
+        container.classList.remove('damage-effect');
+      }, 400);
+    }
+
+    function enableFeverMode() {
+      isFeverMode = true;
+      feverTimer = maxFeverDuration;
+      
+      uiFeverOverlay.classList.remove('hidden');
+      uiFeverOverlay.classList.add('fever-active');
+      uiFeverBarContainer.classList.remove('hidden');
+      uiFeverBarContainer.classList.add('flex');
+
+      scoreFloaters.push(new ScoreFloater(player.x, player.y - 30, "⚡ SUPER DASH SPEED! ⚡", "#fbbf24"));
+      shakeScreen();
+    }
+
+    function disableFeverMode() {
+      isFeverMode = false;
+      uiFeverOverlay.classList.add('hidden');
+      uiFeverOverlay.classList.remove('fever-active');
+      uiFeverBarContainer.classList.add('hidden');
+      uiFeverBarContainer.classList.remove('flex');
+    }
+
+    // ==========================================
+    // 7. 메인 렌더링 프레임
+    // ==========================================
+    function renderGame() {
+      ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+      ctx.save();
+      if (shakeTimer > 0) {
+        const dx = (Math.random() - 0.5) * 14;
+        const dy = (Math.random() - 0.5) * 14;
+        ctx.translate(dx, dy);
+        shakeTimer--;
+      }
+
+      const theme = THEMES[gameData.selectedTheme];
+      const gradient = ctx.createLinearGradient(0, 0, 0, canvasHeight);
+      
+      if (currentActiveMode === 'hard') {
+        gradient.addColorStop(0, '#1c0a0a');
+        gradient.addColorStop(0.5, '#380c0c');
+        gradient.addColorStop(1, '#000000');
+      } else {
+        gradient.addColorStop(0, theme.bgGradient[0]);
+        gradient.addColorStop(0.5, theme.bgGradient[1]);
+        gradient.addColorStop(1, theme.bgGradient[2]);
+      }
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+      backgroundParticles.forEach(p => p.draw());
+
+      // 락온 가이드라인 광선
+      if (missileWarningTimer > 0) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
+        ctx.lineWidth = 4;
+        if (Math.floor(missileWarningTimer / 5) % 2 === 0) {
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.9)';
+        }
+        ctx.beginPath();
+        ctx.moveTo(0, lockOnTargetY + 50);
+        ctx.lineTo(canvasWidth, lockOnTargetY + 50);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      drawGround(theme);
+
+      items.forEach(item => item.draw());
+      obstacles.forEach(obs => obs.draw());
+
+      if (player) player.draw();
+
+      scoreFloaters.forEach(floater => floater.draw());
+
+      ctx.restore();
+    }
+
+    function renderMenuBackground() {
+      if (isPlaying) return;
+      
+      const theme = THEMES[gameData.selectedTheme];
+      const gradient = ctx.createLinearGradient(0, 0, 0, canvasHeight);
+      
+      if (selectedMode === 'hard') {
+        gradient.addColorStop(0, '#1c0a0a');
+        gradient.addColorStop(0.5, '#2e0a0a');
+        gradient.addColorStop(1, '#110505');
+      } else {
+        gradient.addColorStop(0, theme.bgGradient[0]);
+        gradient.addColorStop(0.5, theme.bgGradient[1]);
+        gradient.addColorStop(1, theme.bgGradient[2]);
+      }
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+      if (backgroundParticles.length === 0) {
+        initParticles();
+      }
+      backgroundParticles.forEach(p => {
+        p.update();
+        p.draw();
+      });
+
+      drawGround(theme);
+      requestAnimationFrame(renderMenuBackground);
+    }
+
+    function drawGround(theme) {
+      if (currentActiveMode === 'hard' || (!isPlaying && selectedMode === 'hard')) {
+        ctx.fillStyle = '#450a0a';
+        ctx.fillRect(0, groundY, canvasWidth, canvasHeight - groundY);
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(0, groundY, canvasWidth, 10);
+      } else {
+        ctx.fillStyle = theme.groundColor;
+        ctx.fillRect(0, groundY, canvasWidth, canvasHeight - groundY);
+        ctx.fillStyle = theme.groundAccent;
+        ctx.fillRect(0, groundY, canvasWidth, 10);
+      }
+
+      if (currentActiveMode === 'hard' || (!isPlaying && selectedMode === 'hard')) {
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.25)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(100, groundY + 20); ctx.lineTo(180, groundY + 70);
+        ctx.moveTo(350, groundY + 40); ctx.lineTo(440, groundY + 90);
+        ctx.moveTo(750, groundY + 15); ctx.lineTo(820, groundY + 80);
+        ctx.stroke();
+      } else {
+        if (theme.id === 'desert') {
+          ctx.strokeStyle = 'rgba(180, 83, 9, 0.35)';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          for (let j = 0; j < 3; j++) {
+            const depthY = groundY + 30 + (j * 40);
+            ctx.moveTo(0, depthY);
+            for (let x = 0; x <= canvasWidth; x += 100) {
+              ctx.quadraticCurveTo(x + 50, depthY - 10, x + 100, depthY);
+            }
+          }
+          ctx.stroke();
+        } else if (theme.id === 'arctic') {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(120, groundY + 15); ctx.lineTo(160, groundY + 45); ctx.lineTo(140, groundY + 80);
+          ctx.moveTo(420, groundY + 25); ctx.lineTo(460, groundY + 55); ctx.lineTo(510, groundY + 35);
+          ctx.moveTo(850, groundY + 15); ctx.lineTo(870, groundY + 65); ctx.lineTo(920, groundY + 95);
+          ctx.stroke();
+        } else if (theme.id === 'space') {
+          ctx.strokeStyle = 'rgba(99, 102, 241, 0.3)';
+          ctx.lineWidth = 2;
+          for (let y = groundY + 25; y < canvasHeight; y += 30) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(canvasWidth, y);
+            ctx.stroke();
+          }
+          for (let x = -200; x < canvasWidth + 200; x += 150) {
+            ctx.beginPath();
+            ctx.moveTo(x, groundY);
+            ctx.lineTo(x + (x - canvasWidth/2)*0.5, canvasHeight);
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    function initParticles() {
+      backgroundParticles = [];
+      const isHard = (isPlaying && currentActiveMode === 'hard') || (!isPlaying && selectedMode === 'hard');
+      const count = isHard ? 50 : (gameData.selectedTheme === 'space' ? 45 : 25);
+      for (let i = 0; i < count; i++) {
+        backgroundParticles.push(new Particle(gameData.selectedTheme));
+      }
+    }
+
+    function gameLoop(timestamp) {
+      if (!lastTime) lastTime = timestamp;
+      const progress = timestamp - lastTime;
+      
+      updateGame(progress);
+      renderGame();
+
+      lastTime = timestamp;
+
+      if (isPlaying && !isPaused && !isGameOver) {
+        animationFrameId = requestAnimationFrame(gameLoop);
+      }
+    }
+
+    // ==========================================
+    // 8. 키보드 입력 및 프레스 해제 제어
+    // ==========================================
+    window.addEventListener('keydown', (e) => {
+      if (!isPlaying || isPaused || isGameOver) return;
+      keys[e.code] = true;
+      
+      if (['ArrowUp', 'ArrowDown', 'Space'].includes(e.code)) {
+        e.preventDefault();
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      keys[e.code] = false;
+      
+      if (['ArrowUp', 'KeyW', 'Space'].includes(e.code)) {
+        keyPressed['Jump'] = false;
+      }
+
+      if (['ArrowDown', 'KeyS'].includes(e.code)) {
+        player.slide(false);
+      }
+    });
+
+    let isTouchSliding = false;
+
+    const btnTouchJump = document.getElementById('touchJump');
+    const btnTouchSlide = document.getElementById('touchSlide');
+
+    btnTouchJump.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (!isPlaying || isPaused || isGameOver) return;
+      player.jump();
+    });
+    btnTouchJump.addEventListener('mousedown', () => {
+      if (!isPlaying || isPaused || isGameOver) return;
+      player.jump();
+    });
+
+    btnTouchSlide.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (!isPlaying || isPaused || isGameOver) return;
+      isTouchSliding = true;
+      player.slide(true);
+    });
+    btnTouchSlide.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      isTouchSliding = false;
+      player.slide(false);
+    });
+
+    btnTouchSlide.addEventListener('mousedown', () => {
+      if (!isPlaying || isPaused || isGameOver) return;
+      isTouchSliding = true;
+      player.slide(true);
+    });
+    window.addEventListener('mouseup', () => {
+      isTouchSliding = false;
+      if (player) player.slide(false);
+    });
+
+    // ==========================================
+    // 9. 게임 수명 제어 및 물리 모드별 주입
+    // ==========================================
+    function startGame() {
+      isPlaying = true;
+      isPaused = false;
+      isGameOver = false;
+
+      currentActiveMode = selectedMode;
+
+      score = 0;
+      distance = 0;
+      gemsEarnedThisRun = 0;
+      
+      if (currentActiveMode === 'hard') {
+        baseSpeed = 9.0;               
+        speedIncreaseRate = 0.0024;    
+        obstacleDamage = 34;           
+        missileWarningLimit = 25;      
+        invulnerableDuration = 35;     
+        maxFeverDuration = 200;        
+        
+        uiHardModeOverlay.classList.remove('hidden');
+        uiDifficultyBadge.className = "bg-red-700 border border-red-500 text-yellow-300 font-extrabold px-3 py-1.5 rounded-full tracking-wider flex items-center space-x-1 animate-pulse";
+        uiDifficultyBadge.innerHTML = `<i class="fas fa-skull"></i> <span>HARD</span>`;
+      } else {
+        baseSpeed = 6.0;
+        speedIncreaseRate = 0.0012;
+        obstacleDamage = 25;
+        missileWarningLimit = 40;
+        invulnerableDuration = 60;
+        maxFeverDuration = 300;
+
+        uiHardModeOverlay.classList.add('hidden');
+        uiDifficultyBadge.className = "bg-blue-600/90 border border-blue-400/50 text-white font-extrabold px-3 py-1.5 rounded-full tracking-wider flex items-center space-x-1";
+        uiDifficultyBadge.innerHTML = `<i class="fas fa-smile"></i> <span>NORMAL</span>`;
+      }
+
+      gameSpeed = baseSpeed;
+      hp = 100;
+      obstacleTimer = 0;
+      itemTimer = 0;
+      missileWarningTimer = 0;
+
+      obstacles = [];
+      items = [];
+      scoreFloaters = [];
+      disableFeverMode();
+      uiMissileWarning.classList.add('hidden');
+
+      keyPressed['Jump'] = false;
+
+      const selectChar = CHARACTERS[gameData.selectedCharacter];
+      player = new Player(selectChar);
+
+      initParticles();
+
+      uiMainMenu.classList.add('opacity-0');
+      setTimeout(() => uiMainMenu.classList.add('hidden'), 300);
+      
+      uiGamePlay.classList.remove('hidden');
+      uiGameOverModal.classList.add('hidden');
+      uiPauseModal.classList.add('hidden');
+
+      document.getElementById('uiCharPreview').innerText = selectChar.emoji;
+      document.getElementById('uiGemCount').innerText = '0';
+      document.getElementById('uiScore').innerText = '0';
+      updateHpUI();
+
+      lastTime = 0;
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+      animationFrameId = requestAnimationFrame(gameLoop);
+    }
+
+    function pauseGame() {
+      if (!isPlaying || isGameOver) return;
+      isPaused = true;
+      cancelAnimationFrame(animationFrameId);
+      uiPauseModal.classList.remove('hidden');
+    }
+
+    function resumeGame() {
+      if (!isPlaying || !isPaused) return;
+      isPaused = false;
+      uiPauseModal.classList.add('hidden');
+      lastTime = 0;
+      animationFrameId = requestAnimationFrame(gameLoop);
+    }
+
+    function triggerGameOver() {
+      isPlaying = false;
+      isGameOver = true;
+      cancelAnimationFrame(animationFrameId);
+
+      document.getElementById('finalScore').innerText = `${score} m`;
+      document.getElementById('earnedGems').innerText = gemsEarnedThisRun;
+
+      let isNewBest = false;
+      if (currentActiveMode === 'hard') {
+        document.getElementById('overModeLabel').innerText = "😈 HARD MODE RUN 😈";
+        document.getElementById('overBestLabel').innerText = "최고 기록 (HARD)";
+        if (score > gameData.bestScoreHard) {
+          gameData.bestScoreHard = score;
+          isNewBest = true;
+        }
+        document.getElementById('overBestScore').innerText = `${gameData.bestScoreHard} m`;
+      } else {
+        document.getElementById('overModeLabel').innerText = "😊 NORMAL MODE RUN 😊";
+        document.getElementById('overBestLabel').innerText = "최고 기록 (NORMAL)";
+        if (score > gameData.bestScore) {
+          gameData.bestScore = score;
+          isNewBest = true;
+        }
+        document.getElementById('overBestScore').innerText = `${gameData.bestScore} m`;
+      }
+      saveGameData();
+
+      if (isNewBest) {
+        document.getElementById('newBestBadge').classList.remove('hidden');
+      } else {
+        document.getElementById('newBestBadge').classList.add('hidden');
+      }
+
+      uiGameOverModal.classList.remove('hidden');
+    }
+
+    function exitToMainMenu() {
+      isPlaying = false;
+      isPaused = false;
+      isGameOver = false;
+
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+
+      uiGamePlay.classList.add('hidden');
+      uiGameOverModal.classList.add('hidden');
+      uiPauseModal.classList.add('hidden');
+      uiHardModeOverlay.classList.add('hidden');
+
+      uiMainMenu.classList.remove('hidden');
+      uiMainMenu.classList.remove('opacity-0');
+
+      updateMainUI();
+      renderMenuBackground();
+    }
+
+    function updateHpUI() {
+      const hpPercent = Math.max(0, (hp / maxHp) * 100);
+      const hpBar = document.getElementById('hpBar');
+      hpBar.style.width = `${hpPercent}%`;
+      document.getElementById('hpText').innerText = `${Math.ceil(hp)} / 100`;
+
+      if (hpPercent <= 30) {
+        hpBar.classList.remove('from-red-500', 'to-rose-400');
+        hpBar.classList.add('bg-red-600', 'animate-pulse');
+      } else {
+        hpBar.classList.add('from-red-500', 'to-rose-400');
+        hpBar.classList.remove('bg-red-600', 'animate-pulse');
+      }
+    }
+
+    function updateMainUI() {
+      document.getElementById('mainGemCount').innerText = gameData.gems;
+
+      if (selectedMode === 'hard') {
+        document.getElementById('recordLabel').innerText = "BEST RECORD (HARD) 💀";
+        document.getElementById('mainBestScore').innerText = `${gameData.bestScoreHard || 0} m`;
+      } else {
+        document.getElementById('recordLabel').innerText = "BEST RECORD (NORMAL) 🏃";
+        document.getElementById('mainBestScore').innerText = `${gameData.bestScore || 0} m`;
+      }
+    }
+
+    function checkCollision(rect1, rect2) {
+      return (
+        rect1.x < rect2.x + rect2.width &&
+        rect1.x + rect1.width > rect2.x &&
+        rect1.y < rect2.y + rect2.height &&
+        rect1.y + rect1.height > rect2.y
+      );
+    }
+
+    // ==========================================
+    // 10. 난이도 모드 탭 제어 핸들러
+    // ==========================================
+    const tabNormal = document.getElementById('modeNormalTab');
+    const tabHard = document.getElementById('modeHardTab');
+    const mainTitle = document.getElementById('mainTitle');
+    const modeDesc = document.getElementById('modeDesc');
+    const startBtnText = document.getElementById('startBtnText');
+    const startBtnSubText = document.getElementById('startBtnSubText');
+    const btnStart = document.getElementById('btnStart');
+    const container = document.getElementById('gameContainer');
+
+    tabNormal.addEventListener('click', () => {
+      selectedMode = 'normal';
+      
+      tabNormal.className = "px-6 py-2 rounded-xl text-sm font-bold transition-all duration-200 bg-blue-600 text-white shadow-md";
+      tabHard.className = "px-6 py-2 rounded-xl text-sm font-bold transition-all duration-200 text-slate-400 hover:text-white";
+      
+      mainTitle.className = "text-6xl md:text-8xl font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 via-orange-400 to-red-600 drop-shadow-[0_5px_10px_rgba(0,0,0,0.9)] tracking-wider uppercase italic animate-pulse";
+      modeDesc.innerText = "적당한 속도로 달리며 아이템 수집과 돌파의 참맛을 느낄 수 있습니다.";
+      modeDesc.className = "text-white text-xs md:text-sm tracking-widest mt-3.5 bg-black/70 px-5 py-2 rounded-full border border-white/10 max-w-lg transition-colors";
+      
+      startBtnText.innerText = "START";
+      startBtnSubText.innerText = "노멀 주행";
+      btnStart.className = "btn-bounce bg-gradient-to-r from-yellow-400 via-orange-500 to-red-500 hover:from-yellow-500 hover:via-orange-600 hover:to-red-600 text-white text-2xl md:text-4xl font-extrabold rounded-2xl py-4 px-6 border-b-8 border-red-800 shadow-[0_10px_25px_rgba(239,68,68,0.5)] flex flex-col items-center justify-center transform hover:scale-105 transition-all";
+      container.classList.remove('hard-active-border');
+
+      updateMainUI();
+      initParticles(); 
+    });
+
+    tabHard.addEventListener('click', () => {
+      selectedMode = 'hard';
+
+      tabNormal.className = "px-6 py-2 rounded-xl text-sm font-bold transition-all duration-200 text-slate-400 hover:text-white";
+      tabHard.className = "px-6 py-2 rounded-xl text-sm font-bold transition-all duration-200 bg-red-600 text-white shadow-md animate-pulse";
+      
+      mainTitle.className = "text-6xl md:text-8xl font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-red-500 via-red-700 to-red-950 drop-shadow-[0_5px_10px_rgba(0,0,0,0.9)] tracking-wider uppercase italic animate-pulse";
+      modeDesc.innerText = "🚨 경고: 상상을 초월하는 가속과 무수한 미사일 폭격이 가해집니다. 단 3번의 피격으로 즉시 폭사합니다!";
+      modeDesc.className = "text-red-400 text-xs md:text-sm tracking-widest mt-3.5 bg-red-950/40 px-5 py-2 rounded-full border border-red-800/50 max-w-lg transition-colors";
+      
+      startBtnText.innerHTML = `<i class="fas fa-fire mr-2 text-yellow-300"></i>HARD START`;
+      startBtnSubText.innerText = "지옥의 락온 탈출";
+      btnStart.className = "btn-bounce bg-gradient-to-r from-red-600 via-red-800 to-red-950 hover:from-red-500 hover:via-red-700 hover:to-red-900 text-white text-2xl md:text-4xl font-extrabold rounded-2xl py-4 px-6 border-b-8 border-red-950 shadow-[0_10px_30px_rgba(220,38,38,0.7)] flex flex-col items-center justify-center transform hover:scale-105 transition-all";
+      container.classList.add('hard-active-border'); 
+
+      updateMainUI();
+      initParticles(); 
+    });
+
+    // ==========================================
+    // 11. 상점 팝업 기능 빌더
+    // ==========================================
+    function openCharShop() {
+      const container = document.getElementById('charListContainer');
+      container.innerHTML = '';
+
+      document.getElementById('shopCharGem').innerText = gameData.gems;
+
+      Object.values(CHARACTERS).forEach(char => {
+        const isUnlocked = gameData.unlockedCharacters.includes(char.id);
+        const isSelected = gameData.selectedCharacter === char.id;
+
+        const charBox = document.createElement('div');
+        charBox.className = `flex items-center justify-between p-3.5 rounded-2xl border-2 transition-all ${
+          isSelected ? 'bg-blue-950/50 border-blue-400 shadow-md' : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+        }`;
+
+        let actionBtnHTML = '';
+        if (isSelected) {
+          actionBtnHTML = `<span class="bg-blue-500 text-white font-bold text-xs px-3 py-1.5 rounded-lg">장비 완료</span>`;
+        } else if (isUnlocked) {
+          actionBtnHTML = `<button onclick="selectCharacter('${char.id}')" class="btn-bounce bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs px-4 py-1.5 rounded-lg border-b-2 border-slate-900">선택</button>`;
+        } else {
+          actionBtnHTML = `
+            <button onclick="buyCharacter('${char.id}', ${char.price})" class="btn-bounce bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-3 py-1.5 rounded-lg border-b-2 border-emerald-700 flex items-center space-x-1">
+              <i class="fas fa-gem text-[10px]"></i>
+              <span>${char.price} 구매</span>
+            </button>
+          `;
+        }
+
+        charBox.innerHTML = `
+          <div class="flex items-center space-x-4">
+            <div class="relative w-14 h-14 bg-slate-800 rounded-xl border border-slate-700 flex items-center justify-center overflow-hidden">
+              <span class="text-3xl z-10 transform scale-x-[-1]">${char.emoji}</span>
+            </div>
+            <div class="text-left">
+              <div class="font-bold text-base md:text-lg flex items-center">
+                <span>${char.name}</span>
+              </div>
+              <div class="text-xs text-slate-400 mt-0.5">${char.desc}</div>
+            </div>
+          </div>
+          <div>
+            ${actionBtnHTML}
+          </div>
+        `;
+        container.appendChild(charBox);
+      });
+
+      uiCharShopModal.classList.remove('hidden');
+    }
+
+    window.selectCharacter = function(charId) {
+      gameData.selectedCharacter = charId;
+      saveGameData();
+      openCharShop();
+      updateMainUI();
+    };
+
+    window.buyCharacter = function(charId, price) {
+      if (gameData.gems >= price) {
+        gameData.gems -= price;
+        gameData.unlockedCharacters.push(charId);
+        gameData.selectedCharacter = charId;
+        saveGameData();
+        openCharShop();
+        updateMainUI();
+      } else {
+        alertModal("보석이 부족합니다! 은하수를 질주하고 황금 보석을 더 모으세요! 💎");
+      }
+    };
+
+    function openThemeShop() {
+      const container = document.getElementById('themeListContainer');
+      container.innerHTML = '';
+
+      document.getElementById('shopThemeGem').innerText = gameData.gems;
+
+      Object.values(THEMES).forEach(theme => {
+        const isUnlocked = gameData.unlockedThemes.includes(theme.id);
+        const isSelected = gameData.selectedTheme === theme.id;
+
+        const themeBox = document.createElement('div');
+        themeBox.className = `flex flex-col md:flex-row md:items-center justify-between p-4 rounded-2xl border-2 transition-all space-y-3 md:space-y-0 ${
+          isSelected ? 'bg-emerald-950/50 border-emerald-400 shadow-md' : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+        }`;
+
+        let actionBtnHTML = '';
+        if (isSelected) {
+          actionBtnHTML = `<span class="bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-lg text-center">선택됨</span>`;
+        } else if (isUnlocked) {
+          actionBtnHTML = `<button onclick="selectTheme('${theme.id}')" class="btn-bounce bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs px-5 py-2 rounded-lg border-b-2 border-slate-900">선택</button>`;
+        } else {
+          actionBtnHTML = `
+            <button onclick="buyTheme('${theme.id}', ${theme.price})" class="btn-bounce bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-xs px-4 py-2 rounded-lg border-b-2 border-emerald-700 flex items-center justify-center space-x-1.5">
+              <i class="fas fa-gem text-[10px]"></i>
+              <span>${theme.price} 구매</span>
+            </button>
+          `;
+        }
+
+        const obsPreview = theme.obstacleNames.slice(0, 3).join(' ') + " + 특수장애물 2종";
+
+        themeBox.innerHTML = `
+          <div class="text-left flex-1 md:pr-4">
+            <div class="font-bold text-base md:text-lg flex items-center text-teal-300">
+              <span class="mr-2">${theme.name}</span>
+            </div>
+            <div class="text-xs text-slate-300 mt-1">${theme.desc}</div>
+            <div class="text-[11px] text-slate-400 mt-2 bg-slate-900 p-1.5 rounded border border-slate-800 inline-block">
+              ⚠️ 장애물: ${obsPreview} | 🧪 회복: ${theme.healEmoji} | 💥 타겟 미사일 패턴 탑재
+            </div>
+          </div>
+          <div class="flex justify-end items-center">
+            ${actionBtnHTML}
+          </div>
+        `;
+        container.appendChild(themeBox);
+      });
+
+      uiThemeShopModal.classList.remove('hidden');
+    }
+
+    window.selectTheme = function(themeId) {
+      gameData.selectedTheme = themeId;
+      saveGameData();
+      openThemeShop();
+      updateMainUI();
+      initParticles();
+    };
+
+    window.buyTheme = function(themeId, price) {
+      if (gameData.gems >= price) {
+        gameData.gems -= price;
+        gameData.unlockedThemes.push(themeId);
+        gameData.selectedTheme = themeId;
+        saveGameData();
+        openThemeShop();
+        updateMainUI();
+        initParticles();
+      } else {
+        alertModal("보석이 부족합니다! 질주 중에 황금보석을 모아보세요! 💎");
+      }
+    };
+
+    function alertModal(message) {
+      const alertBox = document.createElement('div');
+      alertBox.className = 'absolute inset-0 z-50 bg-black/80 flex items-center justify-center p-4';
+      alertBox.innerHTML = `
+        <div class="bg-slate-900 border-2 border-orange-500 rounded-3xl p-6 text-center text-white max-w-sm shadow-2xl">
+          <i class="fas fa-exclamation-triangle text-4xl text-orange-400 mb-3 animate-pulse"></i>
+          <p class="text-sm md:text-base font-bold mb-5 leading-relaxed">${message}</p>
+          <button id="closeAlert" class="btn-bounce bg-orange-500 hover:bg-orange-600 text-white px-6 py-2 rounded-xl text-sm font-bold border-b-2 border-orange-700">확인</button>
+        </div>
+      `;
+      document.getElementById('gameContainer').appendChild(alertBox);
+      document.getElementById('closeAlert').addEventListener('click', () => {
+        alertBox.remove();
+      });
+    }
+
+    // ==========================================
+    // 11. 이벤트 등록
+    // ==========================================
+    document.getElementById('btnStart').addEventListener('click', startGame);
+    
+    document.getElementById('btnPause').addEventListener('click', pauseGame);
+    document.getElementById('btnResume').addEventListener('click', resumeGame);
+    document.getElementById('btnRestartFromPause').addEventListener('click', startGame);
+    document.getElementById('btnMainMenu').addEventListener('click', exitToMainMenu);
+
+    document.getElementById('btnRestart').addEventListener('click', startGame);
+    document.getElementById('btnGoHome').addEventListener('click', exitToMainMenu);
+
+    document.getElementById('btnCharShop').addEventListener('click', openCharShop);
+    document.getElementById('btnCloseCharShop').addEventListener('click', () => {
+      uiCharShopModal.classList.add('hidden');
+    });
+
+    document.getElementById('btnThemeShop').addEventListener('click', openThemeShop);
+    document.getElementById('btnCloseThemeShop').addEventListener('click', () => {
+      uiThemeShopModal.classList.add('hidden');
+    });
+
+  </script>
+</body>
+</html>
